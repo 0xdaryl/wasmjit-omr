@@ -18,6 +18,7 @@
 #define FUNCTIONBUILDER_HPP
 
 #include "type-dictionary.h"
+#include "stack.h"
 #include "ilgen/BytecodeBuilder.hpp"
 #include "ilgen/MethodBuilder.hpp"
 #include "ilgen/VirtualMachineOperandStack.hpp"
@@ -34,74 +35,46 @@ class FunctionBuilder : public TR::MethodBuilder {
   FunctionBuilder(interp::Thread* thread, interp::DefinedFunc* fn, TypeDictionary* types);
   bool buildIL() override;
 
-  /**
-   * @brief Generate push to the interpreter stack
-   * @param b is the builder object used to generate the code
-   * @param type is the name of the field in the Value union corresponding to the type of the value being pushed
-   * @param value is the IlValue representing the value being pushed
-   */
-  void Push(TR::IlBuilder* b, const char* type, TR::IlValue* value, const uint8_t* pc);
-
-  /**
-   * @brief Generate pop from the interpreter stack
-   * @param b is the builder object used to generate the code
-   * @param type is the name of the field in the Value union corresponding to the type of the value being popped
-   * @return an IlValue representing the popped value
-   */
-  TR::IlValue* Pop(TR::IlBuilder* b, const char* type);
-
-  /**
-   * @brief Drop a number of values from the interpreter stack, optionally keeping the top value of the stack
-   * @param b is the builder object used to generate the code
-   * @param drop_count is the number of values to drop from the stack
-   * @param keep_count is 1 to keep the top value intact and 0 otherwise
-   */
-  void DropKeep(TR::IlBuilder* b, uint32_t drop_count, uint8_t keep_count);
-
-  /**
-   * @brief Generate load of pointer to a vlue on the interpreter stack by an index
-   * @param b is the builder object used to generate the code
-   * @param depth is the index from the top of the stack
-   * @return and IlValue representing a pointer to the value on the stack
-   *
-   * JitBuilder does not currently represent unions as value types. This a problem
-   * for this function because it cannot simply return an IlValue representing
-   * the union. As workaround, it will generate a load of the *base address* of
-   * the union, instead of loading the union directly. This behaviour differs
-   * from `Thread::Pick()` and users must take this into account.
-   */
-  TR::IlValue* Pick(TR::IlBuilder* b, Index depth);
-
  private:
   struct BytecodeWorkItem {
     TR::BytecodeBuilder* builder;
+    VirtualStack stack;
     const uint8_t* pc;
 
-    BytecodeWorkItem(TR::BytecodeBuilder* builder, const uint8_t* pc)
-      : builder(builder), pc(pc) {}
+    BytecodeWorkItem(TR::BytecodeBuilder* builder,
+                     VirtualStack stack,
+                     const uint8_t* pc)
+      : builder(builder), stack(stack), pc(pc) {}
   };
+
+  void SetUpLocals(TR::IlBuilder* b, const uint8_t** pc, VirtualStack* stack);
+  void TearDownLocals(TR::IlBuilder* b);
+  uint32_t GetLocalOffset(VirtualStack* stack, Type* type, uint32_t depth);
+
+  void PushPhys(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack, uint32_t depth);
+  TR::IlValue* PickPhys(TR::IlBuilder* b, uint32_t depth);
 
   template <typename T>
   const char* TypeFieldName() const;
-
   const char* TypeFieldName(Type t) const;
+  const char* TypeFieldName(TR::DataType dt) const;
 
   TR::IlValue* Const(TR::IlBuilder* b, const interp::TypedValue* v) const;
 
   template <typename T, typename TResult = T, typename TOpHandler>
-  void EmitBinaryOp(TR::IlBuilder* b, const uint8_t* pc, TOpHandler h);
+  void EmitBinaryOp(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack, TOpHandler h);
 
   template <typename T, typename TResult = T, typename TOpHandler>
-  void EmitUnaryOp(TR::IlBuilder* b, const uint8_t* pc, TOpHandler h);
+  void EmitUnaryOp(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack, TOpHandler h);
 
   template <typename T>
-  void EmitIntDivide(TR::IlBuilder* b, const uint8_t* pc);
+  void EmitIntDivide(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack);
 
   template <typename T>
-  void EmitIntRemainder(TR::IlBuilder* b, const uint8_t* pc);
+  void EmitIntRemainder(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack);
 
   template <typename T>
-  TR::IlValue* EmitMemoryPreAccess(TR::IlBuilder* b, const uint8_t** pc);
+  TR::IlValue* EmitMemoryPreAccess(TR::IlBuilder* b, const uint8_t** pc, VirtualStack* stack);
 
   void EmitTrap(TR::IlBuilder* b, TR::IlValue* result, const uint8_t* pc);
   void EmitCheckTrap(TR::IlBuilder* b, TR::IlValue* result, const uint8_t* pc);
@@ -111,9 +84,9 @@ class FunctionBuilder : public TR::MethodBuilder {
   TR::IlValue* EmitIsNan(TR::IlBuilder* b, TR::IlValue* value);
 
   template <typename ToType, typename FromType>
-  void EmitTruncation(TR::IlBuilder* b, const uint8_t* pc);
+  void EmitTruncation(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack);
   template <typename ToType, typename FromType>
-  void EmitUnsignedTruncation(TR::IlBuilder* b, const uint8_t* pc);
+  void EmitUnsignedTruncation(TR::IlBuilder* b, const uint8_t* pc, VirtualStack* stack);
 
   template <typename>
   TR::IlValue* CalculateShiftAmount(TR::IlBuilder* b, TR::IlValue* amount);
@@ -136,7 +109,7 @@ class FunctionBuilder : public TR::MethodBuilder {
   TR::IlType* const valueType_;
   TR::IlType* const pValueType_;
 
-  bool Emit(TR::BytecodeBuilder* b, const uint8_t* istream, const uint8_t* pc);
+  bool Emit(TR::BytecodeBuilder* b, VirtualStack* stack, const uint8_t* istream, const uint8_t* pc);
 };
 
 }
